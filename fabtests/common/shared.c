@@ -175,7 +175,7 @@ int ft_poll_fd(int fd, int timeout)
 		FT_PRINTERR("poll", -errno);
 		ret = -errno;
 	} else if (!ret) {
-		ret = -FI_EAGAIN;
+		ret = -FI_ETIMEDOUT;
 	} else {
 		ret = 0;
 	}

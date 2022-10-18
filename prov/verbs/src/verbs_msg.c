@@ -48,6 +48,8 @@ vrb_msg_ep_recvmsg(struct fid_ep *ep_fid, const struct fi_msg *msg, uint64_t fla
 	};
 
 	vrb_iov_dupa(wr.sg_list, msg->msg_iov, msg->desc, msg->iov_count);
+	if (ep->ibv_qp->state != IBV_QPS_RTS)
+		fprintf(stderr, ">>> vrb_msg_ep_recvmsg: ep->ibv_qp->state = %i\n", ep->ibv_qp->state);
 	return vrb_post_recv(ep, &wr);
 }
 
@@ -65,6 +67,8 @@ vrb_msg_ep_recv(struct fid_ep *ep_fid, void *buf, size_t len,
 		.next = NULL,
 	};
 
+	if (ep->ibv_qp->state != IBV_QPS_RTS)
+		fprintf(stderr, ">>> vrb_post_recv: ep->ibv_qp->state = %i\n", ep->ibv_qp->state);
 	return vrb_post_recv(ep, &wr);
 }
 
@@ -115,6 +119,8 @@ vrb_msg_ep_send(struct fid_ep *ep_fid, const void *buf, size_t len,
 		.send_flags = VERBS_INJECT(ep, len, desc),
 	};
 
+	if (ep->ibv_qp->state != IBV_QPS_RTS)
+		fprintf(stderr, ">>> vrb_msg_ep_send: ep->ibv_qp->state = %i\n", ep->ibv_qp->state);
 	return vrb_send_buf(ep, &wr, buf, len, desc);
 }
 
@@ -132,6 +138,8 @@ vrb_msg_ep_senddata(struct fid_ep *ep_fid, const void *buf, size_t len,
 
 	wr.imm_data = htonl((uint32_t)data);
 
+	if (ep->ibv_qp->state != IBV_QPS_RTS)
+		fprintf(stderr, ">>> vrb_msg_ep_senddata: ep->ibv_qp->state = %i\n", ep->ibv_qp->state);
 	return vrb_send_buf(ep, &wr, buf, len, desc);
 }
 
@@ -161,6 +169,8 @@ static ssize_t vrb_msg_ep_inject(struct fid_ep *ep_fid, const void *buf, size_t 
 		.send_flags = IBV_SEND_INLINE,
 	};
 
+	if (ep->ibv_qp->state != IBV_QPS_RTS)
+		fprintf(stderr, ">>> vrb_msg_ep_inject: ep->ibv_qp->state = %i\n", ep->ibv_qp->state);
 	return vrb_send_buf(ep, &wr, buf, len, NULL);
 }
 
@@ -177,6 +187,8 @@ static ssize_t vrb_msg_ep_injectdata(struct fid_ep *ep_fid, const void *buf, siz
 
 	wr.imm_data = htonl((uint32_t)data);
 
+	if (ep->ibv_qp->state != IBV_QPS_RTS)
+		fprintf(stderr, ">>> vrb_msg_ep_injectdata: ep->ibv_qp->state = %i\n", ep->ibv_qp->state);
 	return vrb_send_buf(ep, &wr, buf, len, NULL);
 }
 

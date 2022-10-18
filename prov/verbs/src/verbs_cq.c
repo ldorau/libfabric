@@ -248,8 +248,12 @@ int vrb_poll_cq(struct vrb_cq *cq, struct ibv_wc *wc)
 	assert(ofi_genlock_held(&cq->util_cq.cq_lock));
 	do {
 		ret = ibv_poll_cq(cq->cq, 1, wc);
-		if (ret <= 0)
+		if (ret <= 0) {
+			// fprintf(stderr, ">>> vrb_poll_cq: %i (BREAK)\n", ret);
 			break;
+		}
+
+		// fprintf(stderr, ">>> vrb_poll_cq: %i\n", ret);
 
 		ctx = (struct vrb_context *) (uintptr_t) wc->wr_id;
 		wc->wr_id = (uintptr_t) ctx->user_ctx;
@@ -264,6 +268,19 @@ int vrb_poll_cq(struct vrb_cq *cq, struct ibv_wc *wc)
 
 			/* workaround incorrect opcode reported by verbs */
 			wc->opcode = vrb_wr2wc_opcode(ctx->sq_opcode);
+/*
+			switch (wc->opcode) {
+			case IBV_WC_SEND:
+				// fprintf(stderr, ">>> vrb_poll_cq = VRB_OP_SQ (IBV_WC_SEND)          ");
+				break;
+			case IBV_WC_RDMA_WRITE:
+				// fprintf(stderr, ">>> vrb_poll_cq = VRB_OP_SQ (IBV_WC_RDMA_WRITE)    ");
+				break;
+			default:
+				// fprintf(stderr, ">>> vrb_poll_cq = VRB_OP_SQ (%i)                   ", wc->opcode);
+				break;
+			} */
+
 			ofi_buf_free(ctx);
 
 		} else if (ctx->op_queue == VRB_OP_RQ) {
@@ -274,11 +291,13 @@ int vrb_poll_cq(struct vrb_cq *cq, struct ibv_wc *wc)
 			(void) slist_remove_head(&ep->rq_list);
 			if (wc->status)
 				wc->opcode = IBV_WC_RECV;
+			// fprintf(stderr, ">>> vrb_poll_cq = VRB_OP_RQ (IBV_WC_RECV)          ");
 			ofi_buf_free(ctx);
 
 		} else {
 			assert(ctx->op_queue == VRB_OP_SRQ);
 			wc->opcode = IBV_WC_RECV;
+			// fprintf(stderr, ">>> vrb_poll_cq = VRB_OP_RQ (IBV_WC_RECV)          ");
 			ofi_mutex_lock(&ctx->srx->ctx_lock);
 			ofi_buf_free(ctx);
 			ofi_mutex_unlock(&ctx->srx->ctx_lock);
@@ -362,8 +381,10 @@ static ssize_t vrb_cq_read(struct fid_cq *cq_fid, void *buf, size_t count)
 		}
 
 		ret = vrb_poll_cq(cq, &wc);
-		if (ret <= 0)
+		if (ret <= 0) {
+			// fprintf(stderr, ">>> vrb_cq_read: %li (BREAK)\n", ret);
 			break;
+		}
 
 		if (wc.status) {
 			wce = ofi_buf_alloc(cq->wce_pool);
@@ -374,9 +395,46 @@ static ssize_t vrb_cq_read(struct fid_cq *cq_fid, void *buf, size_t count)
 			memset(wce, 0, sizeof(*wce));
 			memcpy(&wce->wc, &wc, sizeof wc);
 			slist_insert_tail(&wce->entry, &cq->saved_wc_list);
+
+			char *opcode;
+			switch (wc.opcode) {
+			case IBV_WC_SEND:
+				opcode = "IBV_WC_SEND";
+				break;
+			case IBV_WC_RDMA_WRITE:
+				opcode = "IBV_WC_RDMA_WRITE";
+				break;
+			case IBV_WC_RDMA_READ:
+				opcode = "IBV_WC_RDMA_READ";
+				break;
+			case IBV_WC_RECV:
+				opcode = "IBV_WC_RECV";
+				break;
+			case IBV_WC_RECV_RDMA_WITH_IMM:
+				opcode = "IBV_WC_RECV_RDMA_WITH_IMM";
+				break;
+			default:
+				opcode = "???";
+				break;
+			}
+
+			switch (wc.status) {
+			case IBV_WC_WR_FLUSH_ERR:
+				fprintf(stderr, ">>> vrb_cq_read(): wc.status = IBV_WC_WR_FLUSH_ERR of %s\n", opcode);
+				break;
+			case IBV_WC_RETRY_EXC_ERR:
+				fprintf(stderr, ">>> vrb_cq_read(): wc.status = IBV_WC_RETRY_EXC_ERR of %s\n", opcode);
+				break;
+			default:
+				fprintf(stderr, ">>> vrb_cq_read(): wc.status = %i of %s\n", wc.status, opcode);
+				break;
+			}
+
 			ret = -FI_EAVAIL;
 			break;
 		}
+
+		// printf(stderr, ">>> vrb_cq_read(): wc.status = 0000\n");
 
 		cq->read_entry(&wc, (char *)buf + i * cq->entry_size);
 	}

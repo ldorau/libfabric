@@ -230,6 +230,7 @@ ssize_t ofi_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count,
 	cq->progress(cq);
 	ofi_genlock_lock(&cq->cq_lock);
 	if (ofi_cirque_isempty(cq->cirq)) {
+		// fprintf(stderr, ">>> ofi_cirque_isempty(-FI_EAGAIN)\n");
 		i = -FI_EAGAIN;
 		goto out;
 	}

@@ -27,6 +27,10 @@
  * SOFTWARE.
  */
 
+#define _GNU_SOURCE         /* See feature_test_macros(7) */
+#include <unistd.h>
+#include <sys/syscall.h>   /* For SYS_xxx definitions */
+
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -190,8 +194,10 @@ static int rpc_inject(struct rpc_hdr *hdr, fi_addr_t addr)
 		ret = (int) fi_inject(ep, hdr, sizeof(*hdr), addr);
 	} while ((ret == -FI_EAGAIN) && (ft_gettime_ms() - start < rpc_timeout));
 
-	if (ret)
+	if (ret) {
 		FT_PRINTERR("fi_inject", ret);
+		fprintf(stderr, "fi_inject() failed ret = %i\n", ret);
+	}
 
 	return ret;
 }
@@ -210,10 +216,14 @@ static int rpc_send(struct rpc_hdr *hdr, size_t size, fi_addr_t addr)
 
 	if (ret) {
 		FT_PRINTERR("fi_send", ret);
+		fprintf(stderr, "fi_send() failed ret = %i\n", ret);
 		return ret;
 	}
 
 	ret = fi_cq_sread(txcq, &comp, 1, NULL, rpc_timeout);
+	if (ret != 1)
+		fprintf(stderr, "fi_send(): fi_cq_sread() failed ret = %i\n", ret);
+
 	return ret == 1 ? 0 : ret;
 }
 
@@ -256,10 +266,13 @@ static int rpc_recv(struct rpc_hdr *hdr, size_t size, fi_addr_t addr)
 	ret = (int) fi_recv(ep, hdr, size, NULL, addr, hdr);
 	if (ret) {
 		FT_PRINTERR("fi_recv", ret);
+		fprintf(stderr, "fi_recv() failed ret = %i\n", ret);
 		return ret;
 	}
 
 	ret = fi_cq_sread(rxcq, &comp, 1, NULL, rpc_timeout);
+	if (ret != 1)
+		fprintf(stderr, "rpc_recv(): fi_cq_sread() failed ret = %i\n", ret);
 	return ret == 1 ? 0 : ret;
 }
 
@@ -324,12 +337,16 @@ static int rpc_hello(struct rpc_ctrl *ctrl)
 
 	msg.hdr.size = addrlen;
 	ret = rpc_send(&msg.hdr, sizeof(msg.hdr) + addrlen, server_addr);
-	if (ret)
+	if (ret) {
+		fprintf(stderr, "rpc_send() failed\n");
 		return ret;
+	}
 
 	ret = rpc_recv(&resp, sizeof(resp), FI_ADDR_UNSPEC);
-	if (ret)
+	if (ret) {
+		fprintf(stderr, "rpc_recv() failed\n");
 		return ret;
+	}
 
 	ft_assert(resp.cmd == cmd_hello);
 	id_at_server = resp.client_id;
@@ -612,6 +629,14 @@ static int run_child(void)
 {
 	int i, ret;
 
+/*
+	ret = 0;
+	while (ret == 0) {
+		sleep(1);
+		ret = 0;
+	}
+*/
+
 	printf("(%d-?) running\n", myid);
 	ret = ft_init_fabric();
 	if (ret) {
@@ -630,10 +655,17 @@ static int run_child(void)
 	if (ret)
 		goto free;
 
-	for (i = 0; i < ctrl_cnt && !ret; i++) {
-		printf("(%d-%d) rpc op %s\n", myid, id_at_server,
+	for (i = 0; i < ctrl_cnt ; i++) {
+		printf("(%d-%d) rpc op %s ", myid, id_at_server,
 		       rpc_op_str(ctrls[i].op));
 		ret = ctrl_op[ctrls[i].op](&ctrls[i]);
+		if (ret) {
+			printf("FAILED\n");
+			sleep(3);
+			rpc_hello(NULL);
+		} else {
+			printf("OK\n");
+		}
 	}
 
 free:
@@ -956,11 +988,11 @@ free:
 
 static void complete_rpc(struct rpc_resp *resp)
 {
-	fi_addr_t addr;
+	// fi_addr_t addr;
 	int ret;
 
-	printf("(%d) complete rpc %s (%s)\n", resp->hdr.client_id,
-	       rpc_cmd_str(resp->hdr.cmd), fi_strerror(resp->status));
+	printf("(%d) complete rpc %s (%s) (TID %li)\n", resp->hdr.client_id,
+	       rpc_cmd_str(resp->hdr.cmd), fi_strerror(resp->status), syscall(SYS_gettid));
 
 	if (!resp->status && (resp->flags & rpc_flag_ack))
 		ret = rpc_inject(&resp->hdr, resp->hdr.client_id);
@@ -969,11 +1001,14 @@ static void complete_rpc(struct rpc_resp *resp)
 
 	if (ret) {
 		if (resp->hdr.client_id != invalid_id) {
-			addr = resp->hdr.client_id;
+			// addr = resp->hdr.client_id;
+			printf("(%d) unreachable ... (TID %li)\n", resp->hdr.client_id, syscall(SYS_gettid));
+			/*
 			printf("(%d) unreachable, removing\n", resp->hdr.client_id);
 			ret = fi_av_remove(av, &addr, 1, 0);
 			if (ret)
 				FT_PRINTERR("fi_av_remove", ret);
+			*/
 		}
 	}
 
@@ -1088,7 +1123,7 @@ static void start_rpc(struct rpc_hdr *req)
 	uint64_t start;
 	int ret;
 
-	printf("(%d) start rpc %s\n", req->client_id, rpc_cmd_str(req->cmd));
+	printf("(%d) start rpc %s (TID %li)\n", req->client_id, rpc_cmd_str(req->cmd), syscall(SYS_gettid));
 	if (req->cmd >= cmd_last)
 		goto free;
 
@@ -1126,8 +1161,10 @@ static int handle_cq_error(void)
 
 	ret = fi_cq_readerr(txcq, &cq_err, 0);
 	if (ret < 0) {
-		if (ret == -FI_EAGAIN)
+		if (ret == -FI_EAGAIN) {
+			// fprintf(stderr, ">>> handle_cq_error(-FI_EAGAIN)\n");
 			return 0;
+		}
 
 		FT_PRINTERR("fi_cq_readerr", ret);
 		return ret;
@@ -1151,7 +1188,7 @@ static int wait_on_fd(struct fid_cq *cq, struct fi_cq_tagged_entry *comp)
 	do {
 		ret = fi_trywait(fabric, fids, 1);
 		if (ret == FI_SUCCESS) {
-			ret = ft_poll_fd(fd, -1);
+			ret = ft_poll_fd(fd, 45000);
 			if (ret && ret != -FI_EAGAIN)
 				break;
 		}
@@ -1179,6 +1216,7 @@ static void *process_rpcs(void *context)
 	struct fi_cq_tagged_entry comp = {0};
 	struct rpc_hello_msg *req;
 	int ret;
+	long tid = syscall(SYS_gettid);
 
 	do {
 		req = calloc(1, sizeof(*req));
@@ -1187,6 +1225,7 @@ static void *process_rpcs(void *context)
 			break;
 		}
 
+		printf("TID %li fi_recv() ... \n", tid);
 		ret = (int) fi_recv(ep, req, sizeof(*req), NULL,
 				    FI_ADDR_UNSPEC, req);
 		if (ret) {
@@ -1197,6 +1236,11 @@ static void *process_rpcs(void *context)
 		do {
 			/* The rx and tx cq's are the same */
 			ret = wait_for_comp(rxcq, &comp);
+			if (ret == -FI_ETIMEDOUT) {
+				printf("TID %li timed out\n", tid);
+				ret = 0;
+				break;
+			}
 			if (ret < 0) {
 				comp.flags = FI_SEND;
 				ret = handle_cq_error();
@@ -1251,7 +1295,8 @@ int main(int argc, char **argv)
 	opts = INIT_OPTS;
 	opts.options |= FT_OPT_SKIP_MSG_ALLOC | FT_OPT_SKIP_ADDR_EXCH;
 	opts.mr_mode = FI_MR_PROV_KEY | FI_MR_ALLOCATED | FI_MR_ENDPOINT |
-		       FI_MR_VIRT_ADDR | FI_MR_LOCAL | FI_MR_HMEM;
+		       FI_MR_VIRT_ADDR | FI_MR_HMEM;
+//		       FI_MR_VIRT_ADDR | FI_MR_LOCAL | FI_MR_HMEM;
 	opts.iterations = 1;
 	opts.num_connections = 16;
 	opts.comp_method = FT_COMP_WAIT_FD;

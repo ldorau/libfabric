@@ -82,6 +82,9 @@ ssize_t vrb_post_recv(struct vrb_ep *ep, struct ibv_recv_wr *wr)
 	ctx->op_queue = VRB_OP_RQ;
 	wr->wr_id = (uintptr_t) ctx;
 
+	if (ep->ibv_qp->state != IBV_QPS_RTS)
+		fprintf(stderr, "!!!!!!!!! vrb_post_recv(): ep->ibv_qp->state != IBV_QPS_RTS (= %i) !!!!!!!!!!!!!!!\n", ep->ibv_qp->state);
+
 	ret = ibv_post_recv(ep->ibv_qp, wr, &bad_wr);
 	wr->wr_id = (uintptr_t) ctx->user_ctx;
 	if (ret)
@@ -144,6 +147,7 @@ ssize_t vrb_post_send(struct vrb_ep *ep, struct ibv_send_wr *wr, uint64_t flags)
 	    !(flags & FI_PRIORITY)) {
 		/* Last credit is reserved for credit update */
 		ep->peer_rq_credits++;
+		fprintf(stderr, "rpc_send(): SKIPPING vrb_post_send(): NO peer_rq_credits\n");
 		goto freebuf;
 	}
 
@@ -155,6 +159,9 @@ ssize_t vrb_post_send(struct vrb_ep *ep, struct ibv_send_wr *wr, uint64_t flags)
 	ctx->op_queue = VRB_OP_SQ;
 	ctx->sq_opcode = wr->opcode;
 	wr->wr_id = (uintptr_t) ctx;
+
+	if (ep->ibv_qp->state != IBV_QPS_RTS)
+		fprintf(stderr, "!!!!!!!!! vrb_post_send(): ep->ibv_qp->state != IBV_QPS_RTS (= %i) !!!!!!!!!!!!!!!\n", ep->ibv_qp->state);
 
 	ret = ibv_post_send(ep->ibv_qp, wr, &bad_wr);
 	wr->wr_id = (uintptr_t) ctx->user_ctx;

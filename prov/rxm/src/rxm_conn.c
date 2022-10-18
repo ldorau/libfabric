@@ -430,13 +430,17 @@ rxm_add_conn(struct rxm_ep *ep, struct util_peer_addr *peer)
 
 	assert(ofi_ep_lock_held(&ep->util_ep));
 	conn = ofi_idm_lookup(&ep->conn_idx_map, peer->index);
-	if (conn)
+	if (conn) {
+		if (conn->state != RXM_CM_CONNECTED)
+			fprintf(stderr, "Connection LOOKED_UP (state = %i)\n", conn->state);
 		return conn;
+	}
 
 	conn = rxm_alloc_conn(ep, peer);
 	if (!conn)
 		return NULL;
 
+	fprintf(stderr, "Connection ALLOCATED (state = %i)\n", conn->state);
 	if (ofi_idm_set(&ep->conn_idx_map, peer->index, conn) < 0) {
 		rxm_free_conn(conn);
 		RXM_WARN_ERR(FI_LOG_EP_CTRL, "ofi_idm_set", -FI_ENOMEM);
@@ -465,6 +469,7 @@ ssize_t rxm_get_conn(struct rxm_ep *ep, fi_addr_t addr, struct rxm_conn **conn)
 			if (!dlist_empty(&(*conn)->deferred_tx_queue))
 				return -FI_EAGAIN;
 		}
+		// fprintf(stderr, "rxm_get_conn():rxm_conn->state = %i\n", (*conn)->state);
 		return 0;
 	}
 
@@ -476,6 +481,9 @@ ssize_t rxm_get_conn(struct rxm_ep *ep, fi_addr_t addr, struct rxm_conn **conn)
 	 */
 	if (ret == -FI_EAGAIN)
 		rxm_conn_progress(ep);
+
+	if ((*conn)->state != RXM_CM_CONNECTED)
+		fprintf(stderr, "rxm_get_conn():rxm_conn->state = %i\n", (*conn)->state);
 	return ret;
 }
 
