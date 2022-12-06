@@ -30,6 +30,7 @@
  * SOFTWARE.
  */
 
+#include "ofi_peer.h"
 #include "coll.h"
 
 static uint64_t coll_form_tag(uint32_t coll_id, uint32_t rank)
@@ -1261,7 +1262,7 @@ int coll_query_collective(struct fid_domain *dom_fid,
 			  struct fi_collective_attr *attr, uint64_t flags)
 {
 	int ret;
-	struct coll_domain *domain = container_of(dom_fid, struct coll_domain,
+	struct peer_domain *domain = container_of(dom_fid, struct peer_domain,
 						  util_domain.domain_fid);
 	struct fid_domain *peer_domain = domain->peer_domain;
 

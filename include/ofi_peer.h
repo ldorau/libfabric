@@ -35,11 +35,19 @@
 
 #include <ofi_util.h>
 
+struct peer_domain {
+	struct util_domain util_domain;
+	struct fid_domain *peer_domain;
+};
+
 int ofi_peer_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 			struct fid_cq **cq_fid, void *context);
 
 ssize_t ofi_peer_cq_write(struct fid_cq *cq, void *context, uint64_t flags,
 			size_t len, void *buf, uint64_t data, uint64_t tag,
 			fi_addr_t src);
+
+int ofi_peer_domain_open2(struct fid_fabric *fabric, struct fi_info *info,
+		      struct fid_domain **dom, uint64_t flags, void *context);
 
 #endif /* _OFI_PEER_H_ */

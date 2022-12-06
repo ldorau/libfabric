@@ -30,6 +30,7 @@
  * SOFTWARE.
  */
 
+#include "ofi_peer.h"
 #include "coll.h"
 
 static struct fi_ops_fabric coll_fabric_ops = {
@@ -39,7 +40,7 @@ static struct fi_ops_fabric coll_fabric_ops = {
 	.eq_open = coll_eq_open,
 	.wait_open = ofi_wait_fd_open,
 	.trywait = ofi_trywait,
-	.domain2 = coll_domain_open2,
+	.domain2 = ofi_peer_domain_open2,
 };
 
 static int coll_fabric_close(fid_t fid)
