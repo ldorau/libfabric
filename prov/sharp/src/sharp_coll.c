@@ -728,18 +728,24 @@ ssize_t sharp_ep_barrier2(struct fid_ep *ep, fi_addr_t coll_addr, uint64_t flags
 	if (ret)
 		goto err1;
 #endif
+
+	struct sharp_ep *sharp_ep = container_of(ep, struct sharp_ep, util_ep.ep_fid);
+	ret = fi_barrier2(sharp_ep->peer_ep, coll_addr, FI_PEER_TRANSFER, context);
+	if (ret)
+		goto err_free_barrier_op;
+
 	ret = sharp_sched_comp(barrier_op);
 	if (ret)
-		goto err1;
+		goto err_free_barrier_op;
 
 	util_ep = container_of(ep, struct util_ep, ep_fid);
 	sharp_progress_work(util_ep, barrier_op);
 
 	return FI_SUCCESS;
-err1:
+
+err_free_barrier_op:
 	free(barrier_op);
 	return ret;
-
 }
 
 ssize_t sharp_ep_barrier(struct fid_ep *ep, fi_addr_t coll_addr, void *context)
