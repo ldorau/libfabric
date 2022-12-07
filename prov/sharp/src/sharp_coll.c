@@ -147,6 +147,8 @@ static void sharp_log_work(struct util_coll_operation *coll_op)
 	struct util_coll_xfer_item *xfer_item;
 	struct dlist_entry *tmp = NULL;
 	size_t count = 0;
+	struct util_ep *ep;
+	ep = container_of(coll_op->ep, struct util_ep, ep_fid);
 
 	FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
 	       "Remaining Work for %s:\n",
@@ -160,7 +162,7 @@ static void sharp_log_work(struct util_coll_operation *coll_op)
 			xfer_item = container_of(cur_item,
 						 struct util_coll_xfer_item,
 						 hdr);
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->domain->fabric->prov, FI_LOG_CQ,
 			       "\t%ld: { %p [%s] SEND TO: 0x%02x FROM: 0x%02lx "
 			       "cnt: %d typesize: %ld tag: 0x%02lx }\n",
 			       count, cur_item,
@@ -175,7 +177,7 @@ static void sharp_log_work(struct util_coll_operation *coll_op)
 			xfer_item = container_of(cur_item,
 						 struct util_coll_xfer_item,
 						 hdr);
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->domain->fabric->prov, FI_LOG_CQ,
 			       "\t%ld: { %p [%s] RECV FROM: 0x%02x TO: 0x%02lx "
 			       "cnt: %d typesize: %ld tag: 0x%02lx }\n",
 			       count, cur_item,
@@ -187,32 +189,32 @@ static void sharp_log_work(struct util_coll_operation *coll_op)
 			break;
 
 		case UTIL_COLL_REDUCE:
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->domain->fabric->prov, FI_LOG_CQ,
 			       "\t%ld: { %p [%s] REDUCTION }\n",
 			       count, cur_item,
 			       log_util_coll_state[cur_item->state]);
 			break;
 
 		case UTIL_COLL_COPY:
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->domain->fabric->prov, FI_LOG_CQ,
 			       "\t%ld: { %p [%s] COPY }\n", count, cur_item,
 			       log_util_coll_state[cur_item->state]);
 			break;
 
 		case UTIL_COLL_COMP:
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->domain->fabric->prov, FI_LOG_CQ,
 			       "\t%ld: { %p [%s] COMPLETION }\n", count, cur_item,
 			       log_util_coll_state[cur_item->state]);
 			break;
 
 		case UTIL_COLL_BARRIER:
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->domain->fabric->prov, FI_LOG_CQ,
 			       "\t%ld: { %p [%s] BARRIER }\n", count, cur_item,
 			       log_util_coll_state[cur_item->state]);
 			break;
 
 		default:
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->domain->fabric->prov, FI_LOG_CQ,
 			       "\t%ld: { %p [%s] UNKNOWN }\n", count, cur_item,
 			       log_util_coll_state[cur_item->state]);
 			break;
@@ -252,7 +254,7 @@ static void sharp_progress_work(struct util_ep *util_ep,
 			if (cur_item->fence && !previous_is_head)
 				continue;
 
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(util_ep->domain->fabric->prov, FI_LOG_CQ,
 			       "Removing Completed Work item: %p \n", cur_item);
 			dlist_remove(&cur_item->waiting_entry);
 			free(cur_item);
@@ -267,7 +269,7 @@ static void sharp_progress_work(struct util_ep *util_ep,
 
 		/* we can't progress if prior work is fencing */
 		if (!previous_is_head && prev_item && prev_item->fence) {
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(util_ep->domain->fabric->prov, FI_LOG_CQ,
 			       "%p fenced by: %p \n", cur_item, prev_item);
 			return;
 		}
@@ -277,13 +279,13 @@ static void sharp_progress_work(struct util_ep *util_ep,
 		 * ready item.
 		 */
 		if (cur_item->state != UTIL_COLL_WAITING) {
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(util_ep->domain->fabric->prov, FI_LOG_CQ,
 			       "Work item not waiting: %p [%s]\n", cur_item,
 			       log_util_coll_state[cur_item->state]);
 			continue;
 		}
 
-		FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+		FI_DBG(util_ep->domain->fabric->prov, FI_LOG_CQ,
 		       "Ready item: %p \n", cur_item);
 		next_ready = cur_item;
 		break;
@@ -426,10 +428,10 @@ static ssize_t sharp_process_xfer_item(struct util_coll_xfer_item *item)
 {
 	struct util_coll_operation *coll_op;
 	struct sharp_ep *ep;
+	struct sharp_mc *sharp_mc;
 	struct fi_msg_tagged msg;
 	struct iovec iov;
 	ssize_t ret;
-
 	coll_op = item->hdr.coll_op;
 	ep = container_of(coll_op->ep, struct sharp_ep, util_ep.ep_fid);
 
@@ -448,7 +450,7 @@ static ssize_t sharp_process_xfer_item(struct util_coll_xfer_item *item)
 	if (item->hdr.type == UTIL_COLL_SEND) {
 		ret = fi_tsendmsg(ep->peer_ep, &msg, FI_PEER_TRANSFER);
 		if (!ret)
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->util_ep.domain->fabric->prov, FI_LOG_CQ,
 			       "%p SEND [0x%02lx] -> [0x%02x] cnt: %d sz: %ld\n",
 			       item, coll_op->mc->local_rank, item->remote_rank,
 			       item->count,
@@ -457,16 +459,20 @@ static ssize_t sharp_process_xfer_item(struct util_coll_xfer_item *item)
 	} else if (item->hdr.type == UTIL_COLL_RECV) {
 		ret = fi_trecvmsg(ep->peer_ep, &msg, FI_PEER_TRANSFER);
 		if (!ret)
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->util_ep.domain->fabric->prov, FI_LOG_CQ,
 			       "%p RECV [0x%02lx] <- [0x%02x] cnt: %d sz: %ld\n",
 			       item, coll_op->mc->local_rank, item->remote_rank,
 			       item->count,
 			       item->count * ofi_datatype_size(item->datatype));
 		return ret;
 	} else if (item->hdr.type == UTIL_COLL_BARRIER) {
-		ret = fi_barrier2(ep->peer_ep, (fi_addr_t)coll_op->mc, FI_PEER_TRANSFER, coll_op->context);
+		struct util_coll_mc *coll_mc;
+		sharp_mc = (struct sharp_mc*)(coll_op->mc);
+		struct fid_mc *mc_fid1 = sharp_mc->oob_fid_mc;
+		coll_mc = container_of(mc_fid1, struct util_coll_mc, mc_fid);
+		ret = fi_barrier2(ep->peer_ep, (fi_addr_t)coll_mc, FI_PEER_TRANSFER, coll_op->context);
 		if (!ret)
-			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			FI_DBG(ep->util_ep.domain->fabric->prov, FI_LOG_CQ,
 			       "%p BARRIER [0x%02lx] <- [0x%02x] cnt: %d sz: %ld\n",
 			       item, coll_op->mc->local_rank, item->remote_rank,
 			       item->count,
@@ -574,14 +580,15 @@ ssize_t sharp_peer_xfer_complete(struct fid_ep *ep,
 	xfer_item->hdr.state = UTIL_COLL_COMPLETE;
 
 	coll_op = xfer_item->hdr.coll_op;
-	FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+	util_ep = container_of(coll_op->ep, struct util_ep, ep_fid);
+
+	FI_DBG(util_ep->domain->fabric->prov, FI_LOG_CQ,
 	       "\tXfer complete: { %p %s Remote: 0x%02x Local: "
 	       "0x%02lx cnt: %d typesize: %ld }\n", xfer_item,
 	       xfer_item->hdr.type == UTIL_COLL_SEND ? "SEND" : "RECV",
 	       xfer_item->remote_rank, coll_op->mc->local_rank,
 	       xfer_item->count, ofi_datatype_size(xfer_item->datatype));
 
-	util_ep = container_of(coll_op->ep, struct util_ep, ep_fid);
 	sharp_progress_work(util_ep, coll_op);
 
 	return 0;
@@ -596,7 +603,10 @@ ssize_t sharp_peer_xfer_error(struct fid_ep *ep, struct fi_cq_err_entry *cqerr)
 	xfer_item->hdr.state = UTIL_COLL_COMPLETE;
 
 	coll_op = xfer_item->hdr.coll_op;
-	FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+	struct util_ep *util_ep;
+	util_ep = container_of(coll_op->ep, struct util_ep, ep_fid);
+
+	FI_DBG(util_ep->domain->fabric->prov, FI_LOG_CQ,
 	       "\tXfer error: { %p %s Remote: 0x%02x Local: "
 	       "0x%02lx cnt: %d typesize: %ld }\n", xfer_item,
 	       xfer_item->hdr.type == UTIL_COLL_SEND ? "SEND" : "RECV",
