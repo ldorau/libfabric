@@ -205,6 +205,12 @@ static void sharp_log_work(struct util_coll_operation *coll_op)
 			       log_util_coll_state[cur_item->state]);
 			break;
 
+		case UTIL_COLL_BARRIER:
+			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			       "\t%ld: { %p [%s] BARRIER }\n", count, cur_item,
+			       log_util_coll_state[cur_item->state]);
+			break;
+
 		default:
 			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
 			       "\t%ld: { %p [%s] UNKNOWN }\n", count, cur_item,
@@ -457,6 +463,15 @@ static ssize_t sharp_process_xfer_item(struct util_coll_xfer_item *item)
 			       item->count,
 			       item->count * ofi_datatype_size(item->datatype));
 		return ret;
+	} else if (item->hdr.type == UTIL_COLL_BARRIER) {
+		ret = fi_barrier2(ep->peer_ep, (fi_addr_t)coll_op->mc, FI_PEER_TRANSFER, coll_op->context);
+		if (!ret)
+			FI_DBG(coll_op->mc->av_set->av->prov, FI_LOG_CQ,
+			       "%p BARRIER [0x%02lx] <- [0x%02x] cnt: %d sz: %ld\n",
+			       item, coll_op->mc->local_rank, item->remote_rank,
+			       item->count,
+			       item->count * ofi_datatype_size(item->datatype));
+		return ret;
 	}
 
 	return -FI_ENOSYS;
@@ -477,6 +492,15 @@ void sharp_ep_progress(struct util_ep *util_ep)
 					    work_item, ready_entry);
 		coll_op = work_item->coll_op;
 		switch (work_item->type) {
+		case UTIL_COLL_BARRIER:
+			xfer_item = container_of(work_item,
+						 struct util_coll_xfer_item,
+						 hdr);
+			ret = sharp_process_xfer_item(xfer_item);
+			if (ret)
+				goto out;
+			break;
+
 		case UTIL_COLL_SEND:
 			xfer_item = container_of(work_item,
 						 struct util_coll_xfer_item,
@@ -703,6 +727,55 @@ err0:
 	return ret;
 }
 
+static uint64_t sharp_form_tag(uint32_t coll_id, uint32_t rank)
+{
+	uint64_t tag;
+	uint64_t src_rank = rank;
+
+	tag = coll_id;
+	tag |= (src_rank << 32);
+
+	return tag;
+}
+
+static int sharp_sched_barrier(struct util_coll_operation *coll_op,
+			   uint64_t dest, void *buf, size_t count,
+			   enum fi_datatype datatype, int fence)
+{
+	struct util_coll_xfer_item *xfer_item;
+
+	xfer_item = calloc(1, sizeof(*xfer_item));
+	if (!xfer_item)
+		return -FI_ENOMEM;
+
+	xfer_item->hdr.type = UTIL_COLL_BARRIER;
+	xfer_item->hdr.state = UTIL_COLL_WAITING;
+	xfer_item->hdr.fence = fence;
+	xfer_item->tag = sharp_form_tag(coll_op->cid,
+				       (uint32_t) coll_op->mc->local_rank);
+	xfer_item->buf = buf;
+	xfer_item->count = (int) count;
+	xfer_item->datatype = datatype;
+	xfer_item->remote_rank = (int) dest;
+
+	sharp_bind_work(coll_op, &xfer_item->hdr);
+	return FI_SUCCESS;
+}
+
+static int sharp_do_barrier(struct util_coll_operation *coll_op,
+			     void *result, void* tmp_buf, uint64_t count,
+			     enum fi_datatype datatype, enum fi_op op)
+{
+	uint64_t local = coll_op->mc->local_rank;
+	int ret;
+
+	ret = sharp_sched_barrier(coll_op, local, result, count, datatype, 0);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
 ssize_t sharp_ep_barrier2(struct fid_ep *ep, fi_addr_t coll_addr, uint64_t flags,
 			 void *context)
 {
@@ -719,27 +792,29 @@ ssize_t sharp_ep_barrier2(struct fid_ep *ep, fi_addr_t coll_addr, uint64_t flags
 	if (!barrier_op)
 		return -FI_ENOMEM;
 
-#if 0
-	send = ~barrier_op->mc->local_rank;
-	ret = coll_do_allreduce(barrier_op, &send,
-				&barrier_op->data.barrier.data,
-				&barrier_op->data.barrier.tmp, 1, FI_UINT64,
-				FI_BAND);
+	ret = sharp_do_barrier(barrier_op, &barrier_op->data.barrier.data,
+				&barrier_op->data.barrier.tmp, 0, FI_VOID, FI_NOOP);
 	if (ret)
-		goto err1;
-#endif
+		goto err_free_barrier_op;
+/*
+	struct sharp_ep *sharp_ep = container_of(ep, struct sharp_ep, util_ep.ep_fid);
+	ret = fi_barrier2(sharp_ep->peer_ep, coll_addr, FI_PEER_TRANSFER, context);
+	if (ret)
+		goto err_free_barrier_op;
+*/
+
 	ret = sharp_sched_comp(barrier_op);
 	if (ret)
-		goto err1;
+		goto err_free_barrier_op;
 
 	util_ep = container_of(ep, struct util_ep, ep_fid);
 	sharp_progress_work(util_ep, barrier_op);
 
 	return FI_SUCCESS;
-err1:
+
+err_free_barrier_op:
 	free(barrier_op);
 	return ret;
-
 }
 
 ssize_t sharp_ep_barrier(struct fid_ep *ep, fi_addr_t coll_addr, void *context)

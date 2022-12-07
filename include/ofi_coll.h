@@ -67,6 +67,7 @@ enum coll_work_type {
 	UTIL_COLL_REDUCE,
 	UTIL_COLL_COPY,
 	UTIL_COLL_COMP,
+	UTIL_COLL_BARRIER,
 };
 
 enum coll_state {

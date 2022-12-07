@@ -165,6 +165,12 @@ fid_ep_init(struct fid_ep **ep_fid,
 	(*ep_fid)->collective = collective;
 }
 
+static struct fi_ops_transfer_peer sharp_ep_peer_xfer_ops = {
+	.size = sizeof(struct fi_ops_transfer_peer),
+	.complete = sharp_peer_xfer_complete,
+	.comperr = sharp_peer_xfer_error,
+};
+
 int sharp_endpoint(struct fid_domain *domain, struct fi_info *info,
 		  struct fid_ep **ep_fid, void *context)
 {
@@ -215,6 +221,8 @@ int sharp_endpoint(struct fid_domain *domain, struct fi_info *info,
 		ofi_spin_destroy(&ep->lock);
 		goto err;
 	}
+
+	peer_context->peer_ops = &sharp_ep_peer_xfer_ops;
 
 	fid_ep_init(ep_fid, &ep->util_ep, &sharp_ep_fid_ops, &sharp_ep_ops,
 		&sharp_ep_cm_ops, NULL, NULL, NULL, NULL, &sharp_ep_collective_ops);
