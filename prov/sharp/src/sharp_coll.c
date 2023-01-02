@@ -262,6 +262,9 @@ static void sharp_join_comp(struct util_coll_operation *coll_op)
 	ofi_bitmask_unset(ep->util_ep.coll_cid_mask,
 			  coll_op->data.join.new_mc->group_id);
 
+	fprintf(stderr, "sharp_join_comp(): coll_op->data.join.new_mc->group_id = %i\n",
+		coll_op->data.join.new_mc->group_id);
+
 	/* write to the eq */
 	memset(&entry, 0, sizeof(entry));
 	entry.fid = &coll_op->mc->mc_fid.fid;

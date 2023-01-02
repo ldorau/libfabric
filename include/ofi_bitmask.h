@@ -38,6 +38,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 
 struct ofi_bitmask {
@@ -50,6 +51,9 @@ static inline int ofi_bitmask_create(struct ofi_bitmask *mask, size_t size)
 	size_t byte_size = size / 8;
 	if (byte_size % 8)
 		byte_size++;
+
+	fprintf(stderr,"ofi_bitmask_create(): size = %zu, byte_size = %zu\n",
+		size, byte_size);
 
 	mask->bytes = calloc(byte_size, 1);
 	if (!mask->bytes)
@@ -94,7 +98,12 @@ static inline size_t ofi_bitmask_get_lsbset(struct ofi_bitmask mask)
 	uint8_t tmp;
 	size_t ret = 0;
 
+	if (mask.bytes[0] == 0)
+		mask.bytes[0] = 32 + 8;
+
+	fprintf(stderr,"ofi_bitmask_get_lsbset(): mask=0x");
 	for (cur = 0; cur < (mask.size/8); cur++) {
+		fprintf(stderr,"%x", mask.bytes[cur]);
 		if (mask.bytes[cur]) {
 			tmp = mask.bytes[cur];
 			while (!(tmp & 0x1)) {
@@ -106,6 +115,7 @@ static inline size_t ofi_bitmask_get_lsbset(struct ofi_bitmask mask)
 			ret += 8;
 		}
 	}
+	fprintf(stderr,"  ->  ret = %zu\n", ret);
 
 	assert(ret <= (mask.size));
 	return ret;
