@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include "sharp.h"
+#include "mocks/api/sharp.h"
 
 #include "../../coll/src/coll.h" /* for coll_av_open */
 
@@ -156,7 +157,47 @@ fid_domain_init(struct fid_domain **domain_fid,
 	(*domain_fid)->mr = mr;
 }
 
-int sharp_domain2(struct fid_fabric *fabric, struct fi_info *info,
+int
+sharp_err2fi(int err)
+{
+	switch (err) {
+	case SHARP_COLL_SUCCESS:
+		return FI_SUCCESS;
+	case SHARP_COLL_ERROR:
+		return FI_EOTHER;
+	case SHARP_COLL_ENOT_SUPP:
+		return FI_EOPNOTSUPP;
+	case SHARP_COLL_ENOMEM:
+		return FI_ENOMEM;
+	case SHARP_COLL_EDEV:
+		return FI_EIO;
+	case SHARP_COLL_EINVAL:
+		return FI_EINVAL;
+	case SHARP_COLL_ELOCK_DENIED:
+		return FI_EPERM;
+	case SHARP_COLL_ENO_RESOURCE:
+		return FI_EBUSY;
+	case SHARP_COLL_EGROUP_ALLOC:
+	case SHARP_COLL_ECONN_TREE:
+	case SHARP_COLL_EGROUP_JOIN:
+	case SHARP_COLL_EQUOTA:
+	case SHARP_COLL_ESESS_INIT:
+	case SHARP_COLL_EJOB_CREATE:
+	case SHARP_COLL_ETREE_INFO:
+	case SHARP_COLL_ENOTREE:
+	case SHARP_COLL_EGROUP_ID:
+	case SHARP_COLL_EOOB:
+	case SHARP_COLL_EGROUP_MCAST:
+	case SHARP_COLL_EGROUP_TRIM:
+	case SHARP_COLL_ELOCK_FAILED:
+	default:
+		return FI_EOTHER;
+	}
+	return 0;
+}
+
+int
+sharp_domain2(struct fid_fabric *fabric, struct fi_info *info,
 		struct fid_domain **domain_fid, uint64_t flags, void *context)
 {
 	int ret;
@@ -179,18 +220,20 @@ int sharp_domain2(struct fid_fabric *fabric, struct fi_info *info,
 	if (ret)
 		return ret;
 
+	struct fi_domain_attr domain_attr;
+	ret = ofi_check_domain_attr(&sharp_prov, fabric->api_version,
+				    &domain_attr, info);
+	if (ret)
+		return ret;
+
 	domain = calloc(1, sizeof(*domain));
 	if (!domain)
 		return -FI_ENOMEM;
 
 	ret = ofi_domain_init(fabric, info, &domain->util_domain, context,
 			      OFI_LOCK_MUTEX);
-
-
-	if (ret) {
-		free(domain);
-		return ret;
-	}
+	if (ret)
+		goto err_free_domain;
 
 	ofi_atomic_initialize32(&domain->ref, 0);
 	domain->util_domain.threading = FI_THREAD_UNSPEC;
@@ -208,25 +251,91 @@ int sharp_domain2(struct fid_fabric *fabric, struct fi_info *info,
 		&sharp_domain_ops, &sharp_domain_mr_ops);
 
 
-/*
-XXX maped to 
-int sharp_coll_init(struct sharp_coll_init_spec *sharp_coll_spec,
-		    struct sharp_coll_context  **sharp_coll_context);
-*/
-#if 0
-struct sharp_coll_init_spec {
-	uint64_t	job_id;				/**< Job unique ID */
-	int		world_rank;			/**< Global unique process id. */
-	int		world_size;			/**< Num of processes in the job. */
-	int		(*progress_func)(void);		/**< External progress function. */
-	int		group_channel_idx;		/**< local group channel index(0 .. (max - 1))*/
-	struct sharp_coll_config config;		/**< @ref sharp_coll_config "SHARP COLL Configuration". */
-	struct sharp_coll_out_of_band_colls oob_colls;  /**< @ref sharp_coll_out_of_band_colls "List of OOB collectives". */
-	int             world_local_rank;               /**< relative rank of this process on this node within its job. */
-	int		enable_thread_support;		/**< enable multi threaded support. */
-	void		*oob_ctx;			/**< context for OOB functions in sharp_coll_init */
-	int		reserved[4];			/**< Reserved */
-};
-#endif
+	char *e = getenv("FI_SHARP_IB_PORT");
+	if (e == NULL)
+		e = "1"; /* the default value of FI_SHARP_IB_PORT */
+	
+	/* ib_dev_list is "<domain_attr.name>:<FI_SHARP_IB_PORT>" */
+	int len_ib_dev_list = strlen(domain_attr.name) + 1 + strlen(e) + 1;
+	char *ib_dev_list = calloc(1, len_ib_dev_list);
+	if (!ib_dev_list)
+		goto err_free_domain;
+
+	/* build config.ib_dev_list == "<domain_attr.name>:<FI_SHARP_IB_PORT>" */
+	(void) strcat(ib_dev_list, domain_attr.name);
+	(void) strcat(ib_dev_list, ":");
+	(void) strcat(ib_dev_list, e);
+
+	struct sharp_coll_config config = {
+		.ib_dev_list = ib_dev_list,		/**< IB device name, port list. (const char *) */
+		.user_progress_num_polls = -1,		/**< Number of polls to do before calling user progress. (int) */
+		.coll_timeout = -1,			/**< Timeout (msec) for collective operation, -1 - infinite (int) */
+	};
+
+	struct sharp_coll_out_of_band_colls oob_colls = {
+		.barrier = sharp_oob_barrier,
+		.bcast = sharp_oob_bcast,
+		.gather = sharp_oob_gather
+	};
+
+	struct sharp_coll_init_spec sharp_coll_spec = {
+		.job_id = (gethostid() << 32) | rand(), /**< Job unique ID */
+		.world_rank = 0,			/**< Global unique process id. */
+		.world_size = 1,			/**< Num of processes in the job. */
+/* empty */	.progress_func = sharp_oob_progress,	/**< External progress function. */
+/* ??? */	.group_channel_idx = 0,			/**< local group channel index(0 .. (max - 1))*/
+		.config = config,			/**< @ref sharp_coll_config "SHARP COLL Configuration". */
+/* empty */	.oob_colls = oob_colls,			/**< @ref sharp_coll_out_of_band_colls "List of OOB collectives". */
+		.world_local_rank = 0,			/**< relative rank of this process on this node within its job. */
+		.enable_thread_support = 1,		/**< enable multi threaded support. */
+		.oob_ctx = NULL,			/**< context for OOB functions in sharp_coll_init */
+	};
+
+	/* set sharp_coll_spec.world_size */
+	if ((((e = getenv("PMI_SIZE")) && *e))			// MPICH & IMPI
+	    || (((e = getenv("OMPI_COMM_WORLD_SIZE")) && *e))	// OMPI
+	    || (((e = getenv("MPI_NRANKS")) && *e))		// Platform MPI
+	    || (((e = getenv("MPIRUN_NPROCS")) && *e))		// older MPICH
+	    || (((e = getenv("SLURM_NTASKS")) && *e))		// SLURM
+	    || (((e = getenv("SLURM_NPROCS")) && *e)))		// older SLURM
+	{
+		sharp_coll_spec.world_size = atoi(e);
+	}
+
+	/* set sharp_coll_spec.world_rank */
+	if ((((e = getenv("PMI_RANK")) && *e))			// MPICH and *_SIZE
+	    || (((e = getenv("OMPI_COMM_WORLD_RANK")) && *e))	// OMPI and *_SIZE
+	    || (((e = getenv("MPI_RANKID")) && *e))		// Platform MPI and *_NRANKS
+	    || (((e = getenv("MPIRUN_RANK")) && *e))		// older MPICH and *_NPROCS
+	    || (((e = getenv("PSC_MPI_RANK")) && *e))		// pathscale MPI
+	    || (((e = getenv("SLURM_TASKID")) && *e))		// SLURM
+	    || (((e = getenv("SLURM_PROCID")) && *e)))		// older SLURM
+	{
+		sharp_coll_spec.world_rank = atoi(e);
+	}
+
+	/* set sharp_coll_spec.world_local_rank */
+	if ((((e = getenv("MPI_LOCALRANKID")) && *e))		// MPICH and IMPI
+	    || (((e = getenv("OMPI_COMM_WORLD_LOCAL_RANK")) && *e)) // OMPI
+	    || (((e = getenv("MPI_LOCALRANKID")) && *e)) 	// Platform MPI
+	    || (((e = getenv("PSC_MPI_NODE_RANK")) && *e)) 	// pathscale MPI
+	    || (((e = getenv("SLURM_LOCALID")) && *e)))		// SLURM
+	{
+		sharp_coll_spec.world_local_rank = atoi(e);
+	}
+
+	ret = sharp_coll_init(&sharp_coll_spec, (struct sharp_coll_context **)&domain->sharp_context);
+	free(ib_dev_list); /* not needed any more */
+	if (ret) {
+		const struct fi_provider *prov = domain->util_domain.fabric->prov;
+		FI_WARN(prov, FI_LOG_DOMAIN, "sharp_coll_init() failed: %s\n", sharp_coll_strerror(ret));
+		ret = sharp_err2fi(ret);
+		goto err_free_domain;
+	}
+
 	return 0;
+
+err_free_domain:
+	free(domain);
+	return ret;
 }

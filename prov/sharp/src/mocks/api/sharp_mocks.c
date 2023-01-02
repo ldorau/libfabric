@@ -87,3 +87,17 @@ int sharp_coll_finalize(struct sharp_coll_context *context)
 
 	return 0;
 }
+
+/**
+ * @brief SHARP coll print error string
+ *
+ * This routine returns error string for a given @ref sharp_error_no "SHARP coll error code".
+ *
+ * @param [in] error	SHARP coll error code.
+ *
+ * @return Error string
+ */
+const char *sharp_coll_strerror(int error)
+{
+	return "mocked SHARP coll error message";
+}
